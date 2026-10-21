@@ -49,12 +49,7 @@ The final fields and categories will be confirmed with the supervisor.
 - Submission confirmation.
 - Clear the form after each registration.
 
-### Staff reporting
-- Daily visitor totals.
-- Monthly and yearly statistics.
-- Historical record retrieval.
-- Downloadable reports in an approved format.
-- Staff authentication and access permissions.
+
 
 ### Audit and data protection
 - Reliable record storage.
