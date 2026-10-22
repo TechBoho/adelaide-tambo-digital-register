@@ -1,0 +1,12 @@
+# Installed dependencies
+node_modules/
+
+# Compiled TypeScript output
+dist/
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Allow example environment files
+!.env.example
