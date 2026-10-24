@@ -26,8 +26,8 @@ Develop a web-based Digital Visitor Registration System to replace the library's
 - Initials and surname — required.
 - Number of visitors — required, positive whole number; may be greater than one.
 - Use of public facilities — Study, Reading, Research.
-- Use of IT facilities — Internet, Gaming, Typing.
-- Use of library facilities — Book borrowing, Booking, Other approved services.
+- Use of IT facilities — Internet, Typing.
+- Use of library facilities — Book borrowing, Booking, Enquiries, Programmes, Other approved services.
 - Registration date and time — automatically recorded by the system.
 
 ## 4. Visitor Registration Interface

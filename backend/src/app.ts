@@ -2,6 +2,10 @@ import express from "express";
 import cors from "cors";
 import pool from "./config/db";
 import type { PoolClient } from "pg";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { requireAdmin } from "./middleware/auth";
+import { generatePdfReport } from "./utils/pdfReport";
 
 const app = express();
 
@@ -170,6 +174,340 @@ app.post("/api/registrations", async (req, res) => {
     });
   } finally {
     client?.release();
+  }
+});
+
+
+app.post("/api/admin/login", async (req, res) => {
+  const { username, password } = req.body ?? {};
+
+  if (
+    typeof username !== "string" ||
+    typeof password !== "string" ||
+    !username.trim() ||
+    !password
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Username and password are required",
+    });
+  }
+
+  try {
+    const secret = process.env.JWT_SECRET;
+
+    if (!secret) {
+      return res.status(500).json({
+        success: false,
+        message: "Authentication is not configured",
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT id, username, password_hash
+       FROM admin_users
+       WHERE username = $1`,
+      [username.trim()]
+    );
+
+    const admin = result.rows[0];
+
+    if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid username or password",
+      });
+    }
+
+    const token = jwt.sign(
+      { role: "admin" },
+      secret,
+      {
+        algorithm: "HS256",
+        subject: admin.id,
+        expiresIn: "8h",
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      token,
+      admin: {
+        id: admin.id,
+        username: admin.username,
+      },
+    });
+  } catch (error) {
+    console.error("Admin login failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to log in",
+    });
+  }
+});
+
+
+app.get("/api/admin/me", requireAdmin, (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Supervisor access verified"
+  });
+});
+
+
+app.get("/api/admin/registrations", requireAdmin, async (req, res) => {
+  const date = req.query.date;
+
+  if (
+    typeof date !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ||
+    new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid date is required (YYYY-MM-DD)"
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         vr.id,
+         vr.initials_surname AS "initialsSurname",
+         vr.visitor_count AS "visitorCount",
+         vr.registered_at AS "registeredAt",
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'activityId', a.id,
+               'activityName', a.name,
+               'category', a.category,
+               'visitorCount', ra.activity_visitor_count
+             )
+             ORDER BY a.id
+           ) FILTER (WHERE a.id IS NOT NULL),
+           '[]'::json
+         ) AS activities
+       FROM visitor_registrations vr
+       LEFT JOIN registration_activities ra
+         ON vr.id = ra.registration_id
+       LEFT JOIN activities a
+         ON ra.activity_id = a.id
+       WHERE vr.registered_at >= ($1::date AT TIME ZONE 'Africa/Johannesburg')
+         AND vr.registered_at < (($1::date + 1) AT TIME ZONE 'Africa/Johannesburg')
+       GROUP BY vr.id
+       ORDER BY vr.registered_at DESC`,
+      [date]
+    );
+
+    return res.status(200).json({
+      success: true,
+      date,
+      totalRegistrations: result.rows.length,
+      totalVisitors: result.rows.reduce(
+        (sum, row) => sum + row.visitorCount,
+        0
+      ),
+      registrations: result.rows
+    });
+  } catch (error) {
+    console.error("Failed to retrieve registrations:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve registrations"
+    });
+  }
+});
+
+
+app.get("/api/admin/statistics", requireAdmin, async (req, res) => {
+  const { period, date, year, month } = req.query;
+
+  let startDate: string;
+  let endDate: string;
+
+  try {
+    if (period === "daily") {
+      if (
+        typeof date !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ||
+        new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid date required (YYYY-MM-DD)"
+        });
+      }
+
+      startDate = date;
+      const next = new Date(`${date}T00:00:00Z`);
+      next.setUTCDate(next.getUTCDate() + 1);
+      endDate = next.toISOString().slice(0, 10);
+
+    } else if (period === "monthly") {
+      const y = Number(year);
+      const m = Number(month);
+
+      if (
+        typeof year !== "string" ||
+        !/^\d{4}$/.test(year) ||
+        y < 2000 ||
+        y > 9999 ||
+        typeof month !== "string" ||
+        !/^(0?[1-9]|1[0-2])$/.test(month)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid year and month required"
+        });
+      }
+
+      startDate = `${year}-${String(m).padStart(2, "0")}-01`;
+      const next = new Date(Date.UTC(y, m, 1));
+      endDate = next.toISOString().slice(0, 10);
+
+    } else if (period === "yearly") {
+      if (
+        typeof year !== "string" ||
+        !/^\d{4}$/.test(year) ||
+        Number(year) < 2000 ||
+        Number(year) > 9998
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid year required"
+        });
+      }
+
+      startDate = `${year}-01-01`;
+      endDate = `${Number(year) + 1}-01-01`;
+
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Period must be daily, monthly or yearly"
+      });
+    }
+
+    const totals = await pool.query(
+      `SELECT
+         COUNT(*)::int AS "totalRegistrations",
+         COALESCE(SUM(visitor_count), 0)::int AS "totalVisitors"
+       FROM visitor_registrations
+       WHERE registered_at >= ($1::date AT TIME ZONE 'Africa/Johannesburg')
+         AND registered_at < ($2::date AT TIME ZONE 'Africa/Johannesburg')`,
+      [startDate, endDate]
+    );
+
+    const activities = await pool.query(
+      `SELECT
+         a.id AS "activityId",
+         a.category,
+         a.name AS "activityName",
+         COALESCE(SUM(ra.activity_visitor_count), 0)::int AS "visitorCount"
+       FROM activities a
+       LEFT JOIN registration_activities ra
+         ON ra.activity_id = a.id
+       LEFT JOIN visitor_registrations vr
+         ON vr.id = ra.registration_id
+       WHERE vr.registered_at >= ($1::date AT TIME ZONE 'Africa/Johannesburg')
+         AND vr.registered_at < ($2::date AT TIME ZONE 'Africa/Johannesburg')
+       GROUP BY a.id, a.category, a.name
+       ORDER BY a.id`,
+      [startDate, endDate]
+    );
+
+    return res.status(200).json({
+      success: true,
+      period,
+      startDate,
+      endDateExclusive: endDate,
+      ...totals.rows[0],
+      activities: activities.rows
+    });
+
+  } catch (error) {
+    console.error("Statistics error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve statistics"
+    });
+  }
+});
+
+
+app.get("/api/admin/reports/monthly", requireAdmin, async (req, res) => {
+  const { year, month } = req.query;
+
+  const y = Number(year);
+  const m = Number(month);
+
+  if (
+    typeof year !== "string" ||
+    !/^\d{4}$/.test(year) ||
+    y < 2000 ||
+    y > 9999 ||
+    typeof month !== "string" ||
+    !/^(0?[1-9]|1[0-2])$/.test(month)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid year and month required"
+    });
+  }
+
+  try {
+    await generatePdfReport(res, "monthly", y, m);
+  } catch (error) {
+    console.error("Monthly PDF report failed:", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: "Unable to generate monthly report"
+      });
+    } else {
+      res.destroy();
+    }
+  }
+});
+
+app.get("/api/admin/reports/yearly", requireAdmin, async (req, res) => {
+  const { year } = req.query;
+
+  const y = Number(year);
+
+  if (
+    typeof year !== "string" ||
+    !/^\d{4}$/.test(year) ||
+    y < 2000 ||
+    y > 9998
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid year required"
+    });
+  }
+
+  try {
+    await generatePdfReport(res, "yearly", y);
+  } catch (error) {
+    console.error("Yearly PDF report failed:", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: "Unable to generate yearly report"
+      });
+    } else {
+      res.destroy();
+    }
   }
 });
 
