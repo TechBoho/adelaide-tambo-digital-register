@@ -1,4 +1,4 @@
-import PDFDocument from "pdfkit";
+﻿import PDFDocument from "pdfkit";
 import type { Response } from "express";
 import pool from "../config/db";
 
@@ -38,11 +38,20 @@ export async function generatePdfReport(
     [startDate, endDate]
   );
 
+
   const activityResult = await pool.query(
     `SELECT
        a.category,
        a.name,
-       COALESCE(SUM(ra.activity_visitor_count), 0)::int AS "visitorCount"
+       COALESCE(
+         SUM(
+           CASE
+             WHEN vr.id IS NOT NULL
+             THEN ra.activity_visitor_count
+             ELSE 0
+           END
+         ), 0
+       )::int AS "visitorCount"
      FROM activities a
      LEFT JOIN registration_activities ra
        ON ra.activity_id = a.id
@@ -50,10 +59,12 @@ export async function generatePdfReport(
        ON vr.id = ra.registration_id
        AND vr.registered_at >= ($1::date AT TIME ZONE 'Africa/Johannesburg')
        AND vr.registered_at < ($2::date AT TIME ZONE 'Africa/Johannesburg')
+     WHERE a.name <> 'Gaming'
      GROUP BY a.id, a.category, a.name
      ORDER BY a.id`,
     [startDate, endDate]
   );
+
 
   const activities = activityResult.rows as ActivityRow[];
 
