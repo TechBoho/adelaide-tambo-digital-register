@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { rateLimit } from "express-rate-limit";
 import pool from "./config/db";
 import type { PoolClient } from "pg";
 import bcrypt from "bcryptjs";
@@ -9,9 +10,29 @@ import { generatePdfReport } from "./utils/pdfReport";
 
 const app = express();
 
-// Allow frontend requests during development.
-// Restrict origins before deployment.
-app.use(cors());
+
+const allowedOrigins = (
+  process.env.CORS_ORIGINS ??
+  "http://localhost:3000,http://localhost:8080"
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests without an Origin header, such as server-side tools.
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, false);
+    },
+  })
+);
+
 
 app.use(express.json());
 
@@ -23,7 +44,7 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.get("/api/db-health", async (_req, res) => {
+app.get("/api/db-health", requireAdmin, async (_req, res) => {
   try {
     const result = await pool.query("SELECT NOW() AS server_time");
 
@@ -178,7 +199,19 @@ app.post("/api/registrations", async (req, res) => {
 });
 
 
-app.post("/api/admin/login", async (req, res) => {
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many login attempts. Please try again in 15 minutes.",
+  },
+});
+
+
+app.post("/api/admin/login", adminLoginLimiter, async (req, res) => {
   const { username, password } = req.body ?? {};
 
   if (
