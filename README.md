@@ -43,3 +43,14 @@ The system will be designed to protect visitors' personal information through ap
 Subject to stakeholder approval and project scope, future enhancements may include advanced reporting, spreadsheet exports, improved search and filtering, audit trails for administrative changes, and integration with other approved library systems.
 
 **Note:** The features listed above are proposed requirements and remain subject to confirmation by the library supervisor and relevant stakeholders. Implementation will depend on the agreed project scope, technical feasibility, privacy requirements, and availability of the necessary backend services and data.
+# Adelaide Tambo Digital Visitor Register
+
+A Flutter Web, Node.js, Express, TypeScript, and PostgreSQL application developed to digitize visitor registration and reporting at Adelaide Tambo Public Library.
+
+## Developer Setup
+
+For instructions on installing PostgreSQL, configuring environment variables, creating a supervisor account, and running the backend and Flutter frontend locally, see:
+
+[Local Development Setup Guide](docs/LOCAL_SETUP.md)
+
+---
